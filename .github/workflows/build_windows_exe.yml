@@ -1,0 +1,86 @@
+name: Build Windows Executable
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    name: Build FCT3 Dashboard EXE on Windows x64
+
+    steps:
+      - name: 1. 检出项目代码 (Checkout Code)
+        uses: actions/checkout@v4
+
+      - name: 2. 配置 Python 3.11 编译环境 (Setup Python)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: 3. 安装项目依赖与 PyInstaller 打包工具
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller
+          pip install -r requirements.txt
+
+      - name: 4. 使用 PyInstaller 编译打包 Windows 独立程序
+        run: |
+          python -m PyInstaller --noconfirm --onedir --name "FCT3数据分析看板" `
+            --add-data "app.py;." `
+            --add-data ".streamlit;.streamlit" `
+            --add-data "requirements.txt;." `
+            --add-data "测试数据;测试数据" `
+            --collect-all "streamlit" `
+            --collect-all "plotly" `
+            --collect-all "altair" `
+            --copy-metadata "streamlit" `
+            --copy-metadata "plotly" `
+            run_app.py
+
+      - name: 5. 校验并补全 Streamlit 静态网页前端资源与配置文件
+        shell: pwsh
+        run: |
+          $stPath = python -c "import streamlit, os; print(os.path.dirname(streamlit.__file__))"
+          echo "Streamlit installed at: $stPath"
+          $staticSrc = Join-Path $stPath "static"
+          echo "Streamlit static folder: $staticSrc"
+
+          $distRoot = "dist/FCT3数据分析看板"
+          $distInternal = "dist/FCT3数据分析看板/_internal"
+
+          # 确保 streamlit 静态前端文件复制到所有候选路径
+          if (Test-Path $staticSrc) {
+            echo "Copying static assets..."
+            New-Item -ItemType Directory -Force -Path "$distRoot/streamlit/static" | Out-Null
+            Copy-Item -Recurse -Force "$staticSrc/*" "$distRoot/streamlit/static"
+
+            if (Test-Path $distInternal) {
+              New-Item -ItemType Directory -Force -Path "$distInternal/streamlit/static" | Out-Null
+              Copy-Item -Recurse -Force "$staticSrc/*" "$distInternal/streamlit/static"
+            }
+          }
+
+          # 确保 app.py, .streamlit, 测试数据 位于根目录和 _internal 目录
+          Copy-Item -Force "app.py" "$distRoot/app.py"
+          Copy-Item -Recurse -Force ".streamlit" "$distRoot/.streamlit"
+          Copy-Item -Recurse -Force "测试数据" "$distRoot/测试数据"
+
+          if (Test-Path $distInternal) {
+            Copy-Item -Force "app.py" "$distInternal/app.py"
+            Copy-Item -Recurse -Force ".streamlit" "$distInternal/.streamlit"
+          }
+
+      - name: 6. 压缩构建产物为 ZIP 便携包
+        shell: pwsh
+        run: |
+          Compress-Archive -Path "dist/FCT3数据分析看板" -DestinationPath "FCT3数据分析看板_Windows_x64.zip" -Force
+
+      - name: 7. 上传 Windows EXE 产物至 GitHub Artifacts 供下载
+        uses: actions/upload-artifact@v4
+        with:
+          name: FCT3数据分析看板_Windows_EXE
+          path: FCT3数据分析看板_Windows_x64.zip
+          retention-days: 30
